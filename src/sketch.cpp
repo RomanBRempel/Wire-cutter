@@ -1,6 +1,15 @@
+#include <Arduino.h>
 #include <AccelStepper.h>
 #include <LiquidCrystal.h>
 #include <Servo.h>
+
+// Function prototypes
+int getPressedButton();
+void do_initialize();
+void do_state_stop();
+void do_run();
+void do_set();
+void do_partial_cut();
 
 LiquidCrystal lcd(8, 9, 4, 5, 6, 7 );
 Servo myservo;
@@ -69,7 +78,7 @@ int cutterposition0pen=-350;
 int getPressedButton() {
   int buttonValue;
   buttonValue = analogRead(0);
-  if (prevButtonValue = buttonValue)
+  if (prevButtonValue == buttonValue)
   {
     if (currentMillis - previousMillis >= 100) {
       previousMillis = currentMillis;
@@ -299,7 +308,7 @@ void do_run() {
       action_faze = 0;
       if (CycleCount == 1) {
         overallstate = state_stop;
-        CycleCount == CycleCountTarget;
+        CycleCount = CycleCountTarget;
       } 
       else
       { CycleCount = CycleCount - 1;
