@@ -1,0 +1,5 @@
+{
+    "board": "arduino:avr:mega",
+    "sketch": "src/sketch.ino",
+    "output": "build"
+}
