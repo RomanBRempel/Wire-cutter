@@ -2,6 +2,7 @@
 #include <AccelStepper.h>
 #include <LiquidCrystal.h>
 #include <Servo.h>
+#include <EEPROM.h>
 
 // Function prototypes
 int getPressedButton();
@@ -10,6 +11,10 @@ void do_state_stop();
 void do_run();
 void do_set();
 void do_partial_cut();
+void do_strip_start();
+void do_strip_end();
+void saveSettings();
+void loadSettings();
 
 LiquidCrystal lcd(8, 9, 4, 5, 6, 7 );
 Servo myservo;
@@ -59,6 +64,11 @@ int CycleCountTarget = 1;
 int CycleCount = 1;
 int TargetLenght = 200;
 int TargetPuls;
+
+// Strip wire settings
+int stripMode = 0;  // 0=Off, 1=Start, 2=End, 3=Both
+int stripLength = 10; // Length of wire strip in mm
+int settingsPage = 0; // 0=Main, 1=Strip settings
 
 boolean showtext = false;
 
@@ -139,7 +149,11 @@ void setup() {
   stepper3.setAcceleration(10000.0);
 
   lcd.begin(16, 2);
-  lcd.print("WiCu_0.1");
+  lcd.print("WiCu_0.2");
+  
+  // Load settings from EEPROM
+  loadSettings();
+  
   overallstate = state_initialize;
 
   pinMode(LED_BUILTIN, OUTPUT);
@@ -246,7 +260,12 @@ void do_run() {
       action_faze = 3;
       break;
     case action_faze_3:
-      do_partial_cut();
+      // Strip wire at start if needed
+      if (stripMode == 1 || stripMode == 3) {
+        do_strip_start();
+      } else {
+        do_partial_cut();
+      }
       action_faze = 4;
       break;
     case action_faze_4:
@@ -256,9 +275,17 @@ void do_run() {
       action_faze = 5;
       break;
     case action_faze_5:
-      stepper2.move(TargetPuls);
-      stepper3.move(TargetPuls);
-      if (stepper2.currentPosition() >= TargetPuls) {
+      // Calculate target position considering end strip
+      int feedTarget = TargetPuls;
+      if (stripMode == 2 || stripMode == 3) {
+        // If stripping at end, feed less (minus strip length)
+        int stripPuls = stripLength * (200 / (3.14 * 29));
+        feedTarget = TargetPuls - stripPuls;
+      }
+      
+      stepper2.move(feedTarget);
+      stepper3.move(feedTarget);
+      if (stepper2.currentPosition() >= feedTarget) {
         action_faze = 6;
       }
       else {
@@ -292,7 +319,12 @@ void do_run() {
       action_faze = 8;
       break;
     case action_faze_8:
-      do_partial_cut();
+      // Strip wire at end if needed
+      if (stripMode == 2 || stripMode == 3) {
+        do_strip_end();
+      } else {
+        do_partial_cut();
+      }
       action_faze = 9;
       break;
     case action_faze_9:
@@ -365,39 +397,108 @@ void do_initialize() {
 
 void do_set() {
 
-  if (showtext) {
-    lcd.setCursor(0, 1);
-    lcd.print(TargetLenght);
-    lcd.setCursor(11, 1);
-    lcd.print(CycleCountTarget);
-  }
-  else
-  { lcd.setCursor(0, 1);
-    lcd.print("                ");
-  }
+  if (settingsPage == 0) {
+    // Main settings page
+    lcd.setCursor(0, 0);
+    lcd.print("Len:    Cnt:    ");
+    
+    if (showtext) {
+      lcd.setCursor(4, 0);
+      lcd.print(TargetLenght);
+      lcd.setCursor(12, 0);
+      lcd.print(CycleCountTarget);
+      lcd.setCursor(0, 1);
+      lcd.print("UP=Pg2 SEL=Exit ");
+    }
+    else {
+      lcd.setCursor(0, 1);
+      lcd.print("                ");
+    }
 
-  switch (button) {
-    case BUTTON_RIGHT:
-      TargetLenght = TargetLenght - 100;
-      if (TargetLenght < 200 ) {
-        TargetLenght = 200;
-      }
-      break;
-    case BUTTON_LEFT:
-      TargetLenght = TargetLenght + 100;
-      break;
-    case BUTTON_UP:
-      CycleCountTarget = CycleCountTarget + 1;
-      break;
-    case BUTTON_DOWN:
-      CycleCountTarget = CycleCountTarget - 1;
-      if (CycleCountTarget < 1) {
-        CycleCountTarget = 1;
-      }
-      break;
-    case BUTTON_SELECT:
-      overallstate = state_stop;
-      break;
+    switch (button) {
+      case BUTTON_RIGHT:
+        TargetLenght = TargetLenght - 100;
+        if (TargetLenght < 200) {
+          TargetLenght = 200;
+        }
+        saveSettings();
+        break;
+      case BUTTON_LEFT:
+        TargetLenght = TargetLenght + 100;
+        saveSettings();
+        break;
+      case BUTTON_UP:
+        settingsPage = 1;
+        lcd.clear();
+        break;
+      case BUTTON_DOWN:
+        CycleCountTarget = CycleCountTarget - 1;
+        if (CycleCountTarget < 1) {
+          CycleCountTarget = 1;
+        }
+        saveSettings();
+        break;
+      case BUTTON_SELECT:
+        settingsPage = 0;
+        overallstate = state_stop;
+        lcd.clear();
+        break;
+    }
+  }
+  else if (settingsPage == 1) {
+    // Strip settings page
+    lcd.setCursor(0, 0);
+    lcd.print("Strip:");
+    
+    // Display strip mode
+    lcd.setCursor(6, 0);
+    switch (stripMode) {
+      case 0: lcd.print("Off  "); break;
+      case 1: lcd.print("Start"); break;
+      case 2: lcd.print("End  "); break;
+      case 3: lcd.print("Both "); break;
+    }
+    
+    if (showtext) {
+      lcd.setCursor(0, 1);
+      lcd.print("Len:");
+      lcd.print(stripLength);
+      lcd.print("mm UP=Pg1");
+    }
+    else {
+      lcd.setCursor(0, 1);
+      lcd.print("                ");
+    }
+
+    switch (button) {
+      case BUTTON_RIGHT:
+        stripLength = stripLength - 1;
+        if (stripLength < 5) {
+          stripLength = 5;
+        }
+        saveSettings();
+        break;
+      case BUTTON_LEFT:
+        stripLength = stripLength + 1;
+        if (stripLength > 50) {
+          stripLength = 50;
+        }
+        saveSettings();
+        break;
+      case BUTTON_UP:
+        settingsPage = 0;
+        lcd.clear();
+        break;
+      case BUTTON_DOWN:
+        stripMode = (stripMode + 1) % 4;
+        saveSettings();
+        break;
+      case BUTTON_SELECT:
+        settingsPage = 0;
+        overallstate = state_stop;
+        lcd.clear();
+        break;
+    }
   }
 }
 
@@ -411,4 +512,80 @@ void do_partial_cut() {
       stepper1.setMaxSpeed(15000);
       stepper1.setAcceleration(95000);
       
+}
+
+// EEPROM addresses
+#define EEPROM_ADDR_TARGET_LENGTH 0
+#define EEPROM_ADDR_CYCLE_COUNT 2
+#define EEPROM_ADDR_STRIP_MODE 4
+#define EEPROM_ADDR_STRIP_LENGTH 5
+#define EEPROM_MAGIC 0xAB  // Magic byte to check if EEPROM is initialized
+#define EEPROM_ADDR_MAGIC 7
+
+void saveSettings() {
+  EEPROM.put(EEPROM_ADDR_TARGET_LENGTH, TargetLenght);
+  EEPROM.put(EEPROM_ADDR_CYCLE_COUNT, CycleCountTarget);
+  EEPROM.write(EEPROM_ADDR_STRIP_MODE, stripMode);
+  EEPROM.write(EEPROM_ADDR_STRIP_LENGTH, stripLength);
+  EEPROM.write(EEPROM_ADDR_MAGIC, EEPROM_MAGIC);
+}
+
+void loadSettings() {
+  // Check if EEPROM has been initialized
+  if (EEPROM.read(EEPROM_ADDR_MAGIC) == EEPROM_MAGIC) {
+    EEPROM.get(EEPROM_ADDR_TARGET_LENGTH, TargetLenght);
+    EEPROM.get(EEPROM_ADDR_CYCLE_COUNT, CycleCountTarget);
+    stripMode = EEPROM.read(EEPROM_ADDR_STRIP_MODE);
+    stripLength = EEPROM.read(EEPROM_ADDR_STRIP_LENGTH);
+    
+    // Validate loaded values
+    if (TargetLenght < 200) TargetLenght = 200;
+    if (CycleCountTarget < 1) CycleCountTarget = 1;
+    if (stripMode < 0 || stripMode > 3) stripMode = 0;
+    if (stripLength < 5 || stripLength > 50) stripLength = 10;
+  }
+}
+
+void do_strip_start() {
+  // Calculate pulses for strip length
+  int stripPuls = stripLength * (200 / (3.14 * 29));
+  
+  // 1. Close cutter (partial cut position)
+  do_partial_cut();
+  
+  // 2. Move stepper2 back slightly to strip insulation
+  stepper2.runToNewPosition(stepper2.currentPosition() - 5);
+  
+  // 3. Open cutter
+  stepper1.runToNewPosition(cutterposition0pen);
+  
+  // 4. Return to original position
+  stepper2.runToNewPosition(50);
+  
+  // 5. Feed wire for strip length
+  stepper2.runToNewPosition(stepper2.currentPosition() + stripPuls);
+  stepper3.runToNewPosition(stepper3.currentPosition() + stripPuls);
+}
+
+void do_strip_end() {
+  // Calculate pulses for strip length
+  int stripPuls = stripLength * (200 / (3.14 * 29));
+  
+  // 1. Close cutter (partial cut position)
+  do_partial_cut();
+  
+  // 2. Small movement forward with closed cutter to strip insulation
+  stepper2.runToNewPosition(stepper2.currentPosition() + 5);
+  stepper3.runToNewPosition(stepper3.currentPosition() + 5);
+  
+  // 3. Open cutter
+  stepper1.runToNewPosition(cutterposition0pen);
+  
+  // 4. Move back to position before stripping
+  stepper2.runToNewPosition(stepper2.currentPosition() - 5);
+  stepper3.runToNewPosition(stepper3.currentPosition() - 5);
+  
+  // 5. Feed remaining distance to target length
+  stepper2.runToNewPosition(stepper2.currentPosition() + stripPuls);
+  stepper3.runToNewPosition(stepper3.currentPosition() + stripPuls);
 }
